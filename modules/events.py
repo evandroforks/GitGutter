@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import time
 
 import sublime
@@ -6,6 +5,7 @@ import sublime_plugin
 
 from . import settings
 from .annotation import erase_line_annotation
+from .temp import cleanup
 
 # binary representation of all ST events
 NEW = 1
@@ -17,11 +17,6 @@ MODIFIED = 32
 SELECTION_MODIFIED = 64
 ACTIVATED = 128
 DEACTIVATED = 256
-
-try:
-    set_timeout = sublime.set_timeout_async
-except AttributeError:
-    set_timeout = sublime.set_timeout
 
 
 class EventListener(sublime_plugin.EventListener):
@@ -36,6 +31,9 @@ class EventListener(sublime_plugin.EventListener):
     def __init__(self):
         """Initialize GitGutterEvents object."""
         self.view_events = {}
+
+    def on_exit(self):
+        cleanup()
 
     def on_load(self, view):
         """Run git_gutter after loading, if view is valid.
@@ -221,7 +219,7 @@ class ViewEventListener(object):
             self.events = 0
 
         self.busy = True
-        set_timeout(worker, delay)
+        sublime.set_timeout(worker, delay)
 
     def is_view_visible(self):
         """Determine if the view is visible.
@@ -307,7 +305,7 @@ class BlameEventListener(sublime_plugin.EventListener):
             except (AttributeError, IndexError, TypeError):
                 pass
             else:
-                view.run_command('git_gutter_blame', {'line': row})
+                view.run_command('git_gutter_blame', {'is_event': True, 'line': row})
 
         # don't call blame if selected row changes too quickly
         sublime.set_timeout(on_time, 400)

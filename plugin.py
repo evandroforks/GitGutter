@@ -4,29 +4,22 @@
 This module exports __all__ modules, which Sublime Text needs to know about.
 The list of __all__ exported symbols is defined in modules/__init__.py.
 """
+import sublime
 
-try:
-    from .modules import *
-except ValueError:
-    from modules import *
-except ImportError:
-    # Failed to import at least one module. This can happen after upgrade due
-    # to internal structure changes.
-    import sublime
-    sublime.message_dialog(
-        "GitGutter failed to reload some of its modules.\n"
-        "Please restart Sublime Text!")
+if int(sublime.version()) < 3176:
+    print('GitGutter requires ST3 3176+')
+else:
+    import sys
 
-
-def plugin_loaded():
-    """Plugin loaded callback."""
     try:
-        # Reload 'modules' once after upgrading to ensure GitGutter is ready
-        # for use instantly again. (Works with ST3 and python3 only!)
-        from package_control import events
-        if events.post_upgrade(__package__):
-            from .modules.reload import reload_package
-            reload_package(__package__)
-    except ImportError:
-        # Fail silently if package control isn't installed.
-        pass
+        prefix = __spec__.parent + '.'
+    except Exception:
+        prefix = __package__ + '.'
+
+    for module_name in [
+            module_name for module_name in sys.modules
+            if module_name.startswith(prefix) and module_name != __name__]:
+        del sys.modules[module_name]
+    prefix = None
+
+    from .modules import *

@@ -1,14 +1,11 @@
-# -*- coding: utf-8 -*-
 import sublime
 
 from . import templates
 
-_HAVE_PHANTOMS = hasattr(sublime, 'Phantom')
-
-
-def erase_line_annotation(view):
-    if _HAVE_PHANTOMS:
-        view.erase_phantoms('git_gutter_line_annotation')
+__all__ = [
+    "erase_line_annotation",
+    "GitGutterLineAnnotation"
+]
 
 
 class SimpleLineAnnotationTemplate(object):
@@ -20,7 +17,7 @@ class SimpleLineAnnotationTemplate(object):
     variables = frozenset(['line_author', 'line_author_age', 'line_summary'])
 
     @classmethod
-    def render(cls, **kwargs):
+    def render(cls, kwargs):
         """Render line annotation using a static template.
 
         Arguments:
@@ -31,10 +28,10 @@ class SimpleLineAnnotationTemplate(object):
         Returns:
             string: The formatted annotation message.
         """
-        return cls.TEMPLATE.format(kwargs)
+        return cls.TEMPLATE.format(**kwargs)
 
 
-class GitGutterLineAnnotation(object):
+class GitGutterLineAnnotationST3(object):
 
     # the html template to use to render the blame phantom
     HTML_TEMPLATE = """
@@ -48,10 +45,11 @@ class GitGutterLineAnnotation(object):
                 padding: 0;
             }}
             body {{
+                font-size: 0.85rem;
                 margin-left: {padding};
             }}
             a {{
-                color: color({foreground} blend(var(--foreground) 90%));
+                color: {foreground};
                 text-decoration: none;
             }}
         </style>
@@ -78,16 +76,17 @@ class GitGutterLineAnnotation(object):
         Returns:
             bool: True if blame phantom text is enabled, False otherwise.
         """
-        if not _HAVE_PHANTOMS or self.view.settings().get('draw_centered'):
+        if self.view.settings().get('draw_centered'):
             return False
         show_phantoms = self.settings.get('show_line_annotation', 'auto')
         if show_phantoms == 'auto':
             word_wrap = self.view.settings().get('word_wrap')
             show_phantoms = word_wrap is False or \
                 word_wrap == 'auto' and self.view.match_selector(0, 'source')
-        if not show_phantoms:
-            self.template = None
-        return show_phantoms is True
+        if show_phantoms in (True, 'true'):
+            return True
+        self.template = None
+        return False
 
     def update(self, row, **kwargs):
         """Add a git blame phantom text to the end of the current line.
@@ -100,7 +99,7 @@ class GitGutterLineAnnotation(object):
                 provided as variables for the message template.
         """
         # blame message is useful for committed content only
-        if not _HAVE_PHANTOMS or kwargs['line_summary'] == 'not committed yet':
+        if kwargs['line_summary'] == 'not committed yet':
             return
 
         font_style, padding = 'normal', '5rem'
@@ -149,5 +148,145 @@ class GitGutterLineAnnotation(object):
                     font_style=font_style,
                     padding=padding,
                     text=text),
-                layout=sublime.LAYOUT_INLINE
+                layout=sublime.LAYOUT_INLINE,
+                on_navigate=self.on_navigate
             )
+
+    def on_navigate(self, href):
+        if href.startswith("copy:"):
+            commit_id = href[len("copy:"):]
+            sublime.set_clipboard(commit_id)
+            sublime.status_message(commit_id[:7] + " copied.")
+
+
+class GitGutterLineAnnotationST4(object):
+
+    # the html template to use to render the blame phantom
+    HTML_TEMPLATE = """
+    <body id="gitgutter-line-annotation">
+        <style>
+            html, body {{
+                background-color: var(--background);
+                color: {foreground};
+                font-style: {font_style};
+                margin: 0;
+                padding: 0;
+            }}
+            body {{
+                font-size: 0.85rem;
+            }}
+            a {{
+                color: {foreground};
+                text-decoration: none;
+            }}
+        </style>
+        {text}
+    </body>
+    """
+
+    def __init__(self, view, settings):
+        """Initialize GitGutterLineAnnotation object."""
+        # the sublime.View the status bar is attached to
+        self.view = view
+        # the settings.ViewSettings object which stores GitGutter' settings
+        self.settings = settings
+        # initialize the jinja2 template
+        self.template = None
+
+    def is_enabled(self):
+        """Check if blame phantom text is enabled.
+
+        Note:
+            Keep disabled if `draw_centered` is True because ST3176 does not
+            place the phantom to the correct place then.
+
+        Returns:
+            bool: True if blame phantom text is enabled, False otherwise.
+        """
+        show_phantoms = self.settings.get('show_line_annotation', True)
+        if show_phantoms in (True, 'true', 'auto'):
+            return True
+        self.template = None
+        return False
+
+    def update(self, row, **kwargs):
+        """Add a git blame phantom text to the end of the current line.
+
+        Arguments:
+            row (int):
+                The text row to add the phantom text to.
+            kwargs (dict):
+                The dictionary with the information about the blame, which are
+                provided as variables for the message template.
+        """
+        # blame message is useful for committed content only
+        if kwargs['line_summary'] == 'not committed yet':
+            return
+
+        font_style = 'normal'
+
+        try:
+            style = self.view.style_for_scope('comment.line.annotation.git_gutter')
+            foreground = style['foreground']
+            if style['bold']:
+                if style['italic']:
+                    font_style = 'bold,italic'
+                else:
+                    font_style = 'bold'
+            elif style['italic']:
+                font_style = 'italic'
+        except:
+            foreground = 'color(var(--foreground) blend(var(--background) 30%))'
+
+        # the end of line
+        point = self.view.text_point(row, 0)
+
+        # validate the template
+        if not self.template:
+            self.template = templates.create(
+                self.settings, 'line_annotation_text', SimpleLineAnnotationTemplate)
+
+        # update the phantom
+        self.view.erase_regions('git_gutter_line_annotation')
+        text = self.template.render(kwargs)
+        if text:
+            flags = sublime.DRAW_NO_FILL | sublime.DRAW_NO_OUTLINE | sublime.HIDE_ON_MINIMAP
+            if hasattr(sublime, 'NO_UNDO'):
+                # supported as of ST4160
+                flags |= sublime.NO_UNDO
+
+            self.view.add_regions(
+                key='git_gutter_line_annotation',
+                regions=[sublime.Region(point, point + 1)],
+                scope="markup.changed",
+                annotations=[
+                    self.HTML_TEMPLATE.format(
+                        foreground=foreground,
+                        font_style=font_style,
+                        text=text)
+                ],
+                annotation_color=foreground,
+                flags=flags,
+                on_navigate=self.on_navigate
+            )
+
+    def on_navigate(self, href):
+        if href.startswith("copy:"):
+            commit_id = href[len("copy:"):]
+            sublime.set_clipboard(commit_id)
+            sublime.status_message(commit_id[:7] + " copied.")
+
+
+if int(sublime.version()) >= 4000:
+    def erase_line_annotation(view):
+        view.erase_regions('git_gutter_line_annotation')
+
+    class GitGutterLineAnnotation(GitGutterLineAnnotationST4):
+        pass
+
+else:
+    def erase_line_annotation(view):
+        view.erase_phantoms('git_gutter_line_annotation')
+
+    class GitGutterLineAnnotation(GitGutterLineAnnotationST3):
+        pass

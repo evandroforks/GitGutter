@@ -91,8 +91,6 @@ The icons of the default theme have the following meaning:
 
 The diff popup shows the original content from the commit or the differences between it and the working content.
 
-ⓘ _requires Sublime Text 3 Build 3124+ and mdpopups 2.0.0+_
-
 ![diff_popup_screenshot](docs/assets/images/diff_popup.gif)
 
 The toolbar provides some commands to interact with or modify the changes.
@@ -108,7 +106,7 @@ The toolbar provides some commands to interact with or modify the changes.
  ⟲      | revert a modified hunk to the original state in a commit
 
 
-## Documentaion
+## Documentation
 
 Please read https://jisaacks.github.io/GitGutter/ for detailed information about
 

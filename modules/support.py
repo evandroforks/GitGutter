@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Support Information module.
 
 The module provides functions to gain information to be included in issues.
@@ -12,7 +11,10 @@ import sublime
 import sublime_plugin
 
 # get absolute path of the package
-PACKAGE_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+try:
+    PACKAGE_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__spec__.origin)))
+except (AttributeError, NameError):
+    PACKAGE_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if os.path.isfile(PACKAGE_PATH):
     # Package is a PACKAGE.sublime-package so get its filename
     PACKAGE, _ = os.path.splitext(os.path.basename(PACKAGE_PATH))
@@ -98,28 +100,16 @@ class GitGutterSupportInfoCommand(sublime_plugin.ApplicationCommand):
         }
 
         try:
-            import markdown
-            info['markdown'] = module_version(markdown, 'version')
-        except ImportError:
-            info['markdown'] = 'not installed!'
-
-        try:
             import mdpopups
             info['mdpopups'] = module_version(mdpopups, 'version')
         except ImportError:
             info['mdpopups'] = 'not installed!'
 
         try:
-            import jinja2
+            from mdpopups import jinja2
             info['jinja'] = module_version(jinja2, '__version__')
         except ImportError:
             info['jinja'] = 'not installed!'
-
-        try:
-            import pygments
-            info['pygments'] = module_version(pygments, '__version__')
-        except ImportError:
-            info['pygments'] = 'not installed!'
 
         msg = textwrap.dedent(
             """\
@@ -130,8 +120,6 @@ class GitGutterSupportInfoCommand(sublime_plugin.ApplicationCommand):
             - Install via PC: %(pc_install)s
             - %(git_version)s
             - mdpopups %(mdpopups)s
-            - markdown %(markdown)s
-            - pygments %(pygments)s
             - jinja2 %(jinja)s
             """ % info
         )

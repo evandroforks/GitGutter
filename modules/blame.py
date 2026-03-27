@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import time
 from functools import partial
 
@@ -41,9 +40,10 @@ def run_blame(git_gutter, **kwargs):
             git blame command for.
     """
     # check if feature is enabled
-    show_inline = git_gutter.line_annotation.is_enabled()
+    is_command = not kwargs.get('is_event')
+    show_inline = is_command or git_gutter.line_annotation.is_enabled()
     status_bar = git_gutter.status_bar
-    show_status = (status_bar.is_enabled() and status_bar.has(BLAME_VARIABLES))
+    show_status = status_bar.is_enabled() and status_bar.has(BLAME_VARIABLES)
     if not show_inline and not show_status:
         return None
 
@@ -129,4 +129,4 @@ def format_ago(timestamp):
 
 def format_time(timestamp):
     """Return the human readable time of `timestamp`."""
-    return time.strftime("%b %d %Y %H:%M", time.localtime(timestamp))
+    return time.strftime("%x %H:%M", time.localtime(timestamp))

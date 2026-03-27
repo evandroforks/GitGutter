@@ -1,30 +1,26 @@
-# -*- coding: utf-8 -*-
 import codecs
 import functools
 import os
 import re
 import subprocess
 
-try:
-    from subprocess import TimeoutExpired
-    _HAVE_TIMEOUT = True
-except ImportError:
-    class TimeoutExpired(Exception):
-        pass
-    _HAVE_TIMEOUT = False
-
 import sublime
+
+try:
+    from charset_normalizer import from_bytes as charset_from_bytes
+except ImportError:
+    charset_from_bytes = None
 
 from . import path
 from . import utils
 from .promise import Promise
 from .promise import PromiseError
+from .tasks import execute_async
 from .temp import TempFile
 from .utils import WIN32
 from .view import GitGutterViewCache
 
-# The view class has a method called 'change_count()'
-_HAVE_VIEW_CHANGE_COUNT = hasattr(sublime.View, "change_count")
+_HAVE_MINI_DIFF = hasattr(sublime.View, "set_reference_document")
 
 # Compiled regex pattern to parse first `git status -s -b` line.
 #
@@ -38,14 +34,10 @@ _HAVE_VIEW_CHANGE_COUNT = hasattr(sublime.View, "change_count")
 #     \[(?:ahead (\d+))?(?:, )?(?:behind (\d+))?\]
 #         If a tracked remote exists, the number of commits the local branch is
 #         ahead and behind the remote is optionally available, too.
-_STATUS_RE = re.compile(r'## (\S+(?=\.{3})|\S+(?!\.{3}$))(?:\.{3}(\S+)(?: \[(?:ahead (\d+))?(?:, )?(?:behind (\d+))?\])?)?')
+_STATUS_RE = re.compile(
+    r'## (\S+(?=\.{3})|\S+(?!\.{3}$))(?:\.{3}(\S+)(?: \[(?:ahead (\d+))?(?:, )?(?:behind (\d+))?\])?)?')
 
 _BUFSIZE = 2**15
-
-try:
-    set_timeout = sublime.set_timeout_async
-except AttributeError:
-    set_timeout = sublime.set_timeout
 
 
 class GitGutterHandler(object):
@@ -127,11 +119,10 @@ class GitGutterHandler(object):
             # Query git version synchronously
             try:
                 proc = self.popen([self._git_binary, '--version'])
-                if _HAVE_TIMEOUT:
-                    proc.wait(1.0)
+                proc.wait(1.0)
                 git_version = proc.stdout.read().decode('utf-8')
 
-            except TimeoutExpired as error:
+            except subprocess.TimeoutExpired as error:
                 proc.kill()
                 git_version = proc.stdout.read().decode('utf-8')
                 if not is_missing and self.settings.get('debug'):
@@ -177,16 +168,15 @@ class GitGutterHandler(object):
             # Check if file exists
             file_name = path.realpath(self.view.file_name())
             if not file_name or not os.path.isfile(file_name):
+                self.reset_git_file()
                 self._view_file_name = None
-                self._git_tree = None
-                self._git_path = None
                 return None
             # Check if file was renamed
             is_renamed = file_name != self._view_file_name
             if is_renamed or not path.is_work_tree(self._git_tree):
+                self.reset_git_file()
                 self._view_file_name = file_name
                 self._git_tree, self._git_path = path.split_work_tree(file_name)
-                self.invalidate_git_file()
         return self._git_tree
 
     def work_tree_supported(self):
@@ -201,7 +191,7 @@ class GitGutterHandler(object):
                 True if not running in WSL mode or path is a local drive
                 False if the working tree is no local drive in WSL mode.
         """
-        return not self._git_wsl or self._git_tree and self._git_tree[1] == ':'
+        return not self._git_wsl or path.is_translatable_to_wsl(self._git_tree)
 
     def translate_path_to_wsl(self, filename):
         """Translate filename to a WSL compatible unix path on demand.
@@ -235,10 +225,11 @@ class GitGutterHandler(object):
                 The reference to compare the view against.
         """
         # Interactively specified compare target overrides settings.
-        if self._git_tree in self._compare_against_mapping:
-            return self._compare_against_mapping[self._git_tree]
-        # Project settings and Preferences override plugin settings if set.
-        return self.settings.get('compare_against', 'HEAD')
+        result = self._compare_against_mapping.get(self._git_tree)
+        if not result:
+            # Project settings and Preferences override plugin settings if set.
+            result = self.settings.get('compare_against', 'HEAD')
+        return result
 
     def set_compare_against(self, compare_against, refresh=False):
         """Apply a new branch/commit/tag string the view is compared to.
@@ -254,6 +245,8 @@ class GitGutterHandler(object):
                 from 'git show-ref' to compare the view against
             refresh (bool): True to force git diff and update GUI
         """
+        if not compare_against:
+            return
         self._compare_against_mapping[self._git_tree] = compare_against
         # force refresh if live_mode and focus_change_mode are disabled
         refresh |= (not self.settings.get('live_mode') and
@@ -290,6 +283,16 @@ class GitGutterHandler(object):
         """Invalidate all cached results of recent git commands."""
         self._git_temp_file_valid = False
         self._git_env = None
+
+    def reset_git_file(self):
+        """Reset cached information of the commited file."""
+        self.git_tracked = False
+        self._git_compared_commit = None
+        self._git_diff_cache = ''
+        self._git_temp_file = None
+        self._git_tree = None
+        self._git_path = None
+        self.invalidate_git_file()
 
     def update_git_file(self):
         """Update file from git index and write it to a temporary file.
@@ -351,6 +354,13 @@ class GitGutterHandler(object):
 
         self._git_compared_commit = compared_id
         self.git_tracked = output > 0
+
+        if _HAVE_MINI_DIFF and self.git_tracked and self.view.settings().get('mini_diff', False):
+            # file is still open for writing at this point
+            with open(self._git_temp_file.name, mode='r',
+                      encoding=self.view_cache.python_friendly_encoding()) as file:
+                self.view.set_reference_document(file.read())
+
         return self.git_tracked
 
     def diff(self):
@@ -385,7 +395,7 @@ class GitGutterHandler(object):
             '-c', 'core.autocrlf=input',
             '-c', 'core.eol=lf',
             '-c', 'core.safecrlf=false',
-            'diff', '-U0', '--no-color', '--no-index',
+            'diff', '-U0', '--no-color', '--no-index', '--no-ext-diff',
             self.settings.ignore_whitespace,
             self.settings.diff_algorithm,
             self.translate_path_to_wsl(self._git_temp_file.name),
@@ -393,25 +403,30 @@ class GitGutterHandler(object):
         ))), decode=False).then(self._decode_diff)
 
     def _decode_diff(self, results):
-        encoding = self.view_cache.python_friendly_encoding()
-        try:
-            decoded_results = results.decode(encoding)
-        except AttributeError:
-            # git returned None on stdout
-            decoded_results = ''
-        except UnicodeError:
-            try:
-                decoded_results = results.decode('utf-8')
-            except UnicodeDecodeError:
-                decoded_results = ''
-        except LookupError:
-            try:
-                decoded_results = codecs.decode(results)
-            except UnicodeDecodeError:
-                decoded_results = ''
         # cache the diff result for reuse with diff_popup.
-        self._git_diff_cache = decoded_results
-        return self.process_diff(decoded_results)
+        self._git_diff_cache = self._decode_content(results) or ''
+        return self.process_diff(self._git_diff_cache)
+
+    def _decode_content(self, content):
+        if content is not None:
+            encoding = self.view_cache.python_friendly_encoding()
+            try:
+                return content.decode(encoding)
+            except Exception:
+                detected_encoding = 'utf-8'
+                if charset_from_bytes is not None:
+                    charset_match = charset_from_bytes(content).best()
+                    if charset_match:
+                        detected_encoding = charset_match.encoding
+                        if charset_match.bom and detected_encoding == "utf_8":
+                            detected_encoding += "_sig"
+
+                if encoding != detected_encoding:
+                    return content.decode(detected_encoding, 'ignore')
+
+                raise
+
+        return None
 
     @staticmethod
     def process_diff(diff_str):
@@ -629,6 +644,12 @@ class GitGutterHandler(object):
             'for-each-ref', '--sort=-refname', template, 'refs/tags/'
         ])
 
+    def git_branch_name(self):
+        return self.execute_async([
+            self._git_binary,
+            'rev-parse', '--abbrev-ref', 'HEAD'
+        ])
+
     def git_branch_status(self):
         """Query the current status of the file's repository."""
         def parse_output(output):
@@ -715,55 +736,47 @@ class GitGutterHandler(object):
             be created, opened or written data to, if git failed to run or
             returned a none-zero exit code other than 128 (file not found).
         """
-        if not self._git_temp_file:
-            self._git_temp_file = TempFile(mode='wb')
+        def task_fn(resolve, commit):
+            """The task to run asynchronously which resolves the Promise.
 
-        try:
-            proc = self.popen([
-                self._git_binary,
-                '-c', 'core.autocrlf=input',
-                '-c', 'core.eol=lf',
-                '-c', 'core.safecrlf=false',
-                'cat-file',
-                # smudge filters are supported with git 2.11.0+ only
-                '--filters' if self._git_version >= (2, 11, 0) else '-p',
-                ':'.join((commit, self._git_path))
-            ], stdout=self._git_temp_file.open())
+            Arguments:
+                resolve (callable):
+                    The function to call to resolve the Promise.
 
-        except Exception as error:
-            self._git_temp_file.close()
-            return Promise.resolve(PromiseError(str(error)))
-
-        def poll(proc, resolve):
-            """Poll the process and resolve promise if finished."""
+                commit (string):
+                    The identifier of the commit to read file from.
+            """
             try:
-                returncode = proc.poll()
-                if returncode is None:
-                    # git is still busy, come here later again
-                    set_timeout(functools.partial(poll, proc, resolve), 50)
-                    return None
+                if not self._git_temp_file:
+                    self._git_temp_file = TempFile(mode='wb')
 
-                # file is still open for writing at this point
-                with self._git_temp_file as file:
-                    if returncode == 0:
+                with self._git_temp_file as temp_file:
+                    proc = self.popen([
+                        self._git_binary,
+                        '-c', 'core.autocrlf=input',
+                        '-c', 'core.eol=lf',
+                        '-c', 'core.safecrlf=false',
+                        'cat-file',
+                        # smudge filters are supported with git 2.11.0+ only
+                        '--filters' if self._git_version >= (2, 11, 0) else '-p',
+                        ':'.join((commit, self._git_path))
+                    ], stdout=temp_file)
+
+                    proc.wait()
+
+                    if proc.returncode == 0:
                         # resolve with the number of bytes got from git cat-file
-                        return resolve(file.tell())
-                    elif returncode == 128:
+                        return resolve(temp_file.tell())
+                    elif proc.returncode == 128:
                         # resolve with 0 bytes if file was not found in repo.
                         return resolve(0)
                     return resolve(PromiseError("git returned error %d: %s" % (
-                        returncode, proc.stderr.read().decode('utf-8'))))
+                        proc.returncode, proc.stderr.read().decode('utf-8'))))
 
             except Exception as error:
-                # close the temporary file if anything goes wrong
-                self._git_temp_file.close()
-                raise
+                return resolve(PromiseError(str(error)))
 
-        def executor(resolve):
-            """Start polling the process to query for its finish."""
-            set_timeout(functools.partial(poll, proc, resolve), 50)
-
-        return Promise(executor)
+        return execute_async(task_fn, commit)
 
     def execute_async(self, args, decode=True):
         """Execute a git command asynchronously and return a Promise.
@@ -776,54 +789,37 @@ class GitGutterHandler(object):
         Returns:
             Promise: A promise to return the git output in the future.
         """
-        try:
-            proc = self.popen(args)
-        except Exception as error:
-            utils.log_message(str(error))
-            return Promise.resolve(None)
-
-        # inject some attributes into the proc object
-        setattr(proc, 'buffer', b'')
-
-        def poll(proc, resolve, decode):
-            """Poll the process and resolve promise if finished.
+        def task_fn(resolve, decode, args):
+            """The task to run asynchronously which resolves the Promise.
 
             Arguments:
-                proc (subprocess.Popen):
-                    The running process' object to quiery for completion
                 resolve (callable):
                     The function to be called to resolve the Promise.
                 decode (bool):
                     True to decode the binary output to text.
+                args (list):
+                    A list of arguments to pass to `subprocess.Popen`.
             """
-            chunk = proc.stdout.read(_BUFSIZE)
-            if chunk:
-                # need to read from stdout as process won't exit if buffer
-                # is full.
-                proc.buffer += chunk
-                if len(chunk) == _BUFSIZE:
-                    # git is still busy, come here later again
-                    set_timeout(functools.partial(
-                        poll, proc, resolve, decode), 20)
-                    return
+            try:
+                proc = self.popen(args)
+            except Exception as error:
+                utils.log_message(str(error))
+                return resolve(None)
 
-            if not proc.buffer and self.settings.get('debug'):
+            chunk = proc.stdout.read()
+            if not chunk and self.settings.get('debug'):
                 proc.wait()
                 # 0 = ok, 128 = file not found
                 if proc.returncode not in (0, 128):
                     utils.log_message('%s failed with "%s"' % (
                         ' '.join(args), proc.stderr.read().decode('utf-8').strip()))
 
-            # return decoded ouptut using utf-8 or binary output
-            if decode and proc.buffer is not None:
-                return resolve(proc.buffer.decode('utf-8').strip())
-            return resolve(proc.buffer)
+            if decode and chunk is not None:
+                chunk = self._decode_content(chunk).strip()
 
-        def executor(resolve):
-            """Start polling the process to query for its finish."""
-            set_timeout(functools.partial(poll, proc, resolve, decode), 20)
+            return resolve(chunk)
 
-        return Promise(executor)
+        return execute_async(task_fn, decode, args)
 
     def popen(self, args, stdout=subprocess.PIPE):
         """Prepare the environment and spawn the subprocess.

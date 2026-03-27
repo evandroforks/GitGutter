@@ -118,8 +118,7 @@
     //
 
     // (ST3, Build 3119+ only)
-    // Enable an hover popup, which shows an diff of the
-    // changed lines.
+    // Enable hover popup, which shows a diff of the changed lines.
     "git_gutter_enable_hover_diff_popup": true,
 
     // (ST3 only) The default mode to open the diff popup. This will be
@@ -187,7 +186,7 @@
     //   {{line_committer_tz}   -- the timezone string of commit
     //   {{line_summary}}       -- the first line of the commit message
     //   {{line_previous}}      -- the hash of the previous commit
-    "git_gutter_line_annotation_text": "{{line_author}} ({{line_author_age}}) · {{line_summary}}",
+    "git_gutter_line_annotation_text": "{% if line_commit and line_commit[:7] != '0000000' %} <a href=\"copy:{{line_commit}}\">{{line_commit[:7]}}</a> | {% endif %}<a href=\"subl:sublime_merge_line_history\">{{line_author}} ({{line_author_age}}) · {{line_summary}}</a>",
 
     //
     // Status Bar
@@ -202,6 +201,7 @@
     // The array is joined to a single string and passed to jinja2 template
     // engine to render the status message text. The template can be modified using
     // jinja2 supported syntax. GitGutter provides the following variables:
+    //   {{st_git_status}}      -- Sublime Text git integration available and enabled
     //   {{repo}}               -- repository name / folder name containing the .git directory
     //   {{branch}}             -- checked out branch you are working on
     //   {{remote}}             -- tracked remote of current branch you are working on or `None`
@@ -229,16 +229,18 @@
     //   {{line_committer_tz}   -- the timezone string of commit
     //   {{line_summary}}       -- the first line of the commit message
     //   {{line_previous}}      -- the hash of the previous commit
-    "status_bar_text": [
+    "git_gutter_status_bar_text": [
         "{% if repo and branch %}",
-        "{{repo}}/{{branch}}",
-        "{% if added_files + deleted_files + modified_files > 0 %}*{% endif %}",
-        "{% if compare not in ('HEAD', branch, None) %}, Comparing against {{compare}}{% endif %}",
-        "{% if state %}, File is {{state}}{% endif %}",
-        "{% if deleted > 0 %}, {{deleted}}-{% endif %}",
-        "{% if inserted > 0 %}, {{inserted}}+{% endif %}",
-        "{% if modified > 0 %}, {{modified}}≠{% endif %}",
-        "{% if line_author and line_author_age %}, ⟢ {{line_author}} ({{line_author_age}}){% endif %}",
+            "{% if not st_git_status %}",
+                "{{repo}}/{{branch}}",
+                "{% if added_files + deleted_files + modified_files > 0 %}*{% endif %}, ",
+            "{% endif %}",
+            "{% if compare not in ('HEAD', branch, None) %}Comparing against {{compare}}, {% endif %}",
+            "{% if state %}File is {{state}}{% endif %}",
+            "{% if deleted > 0 %}, {{deleted}}-{% endif %}",
+            "{% if inserted > 0 %}, {{inserted}}+{% endif %}",
+            "{% if modified > 0 %}, {{modified}}≠{% endif %}",
+            "{% if line_commit and line_commit[:7] != '0000000' %}, ⟢ {{line_commit[:7]}} | {{line_author}} ({{line_author_age}}){% endif %}",
         "{% endif %}"
     ]
 }

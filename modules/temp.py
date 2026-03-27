@@ -1,8 +1,8 @@
-# -*- coding: utf-8 -*-
 import errno
 import os
 import tempfile
 import time
+import uuid
 
 # The folder to place all temporary files into.
 TEMP_DIR = os.environ.get('XDG_RUNTIME_DIR')
@@ -15,17 +15,30 @@ else:
     if hasattr(os, 'getuid'):
         TEMP_DIR += '.%s' % os.getuid()
 
+"""
+Remove all temporary files older than 2 days. Looks like in some cases some
+temporary files are not deleted, if ST is closed. So try to delete too old
+ones upon startup. Wait 2 days to reduce the chance of deleting temporary
+files of another open ST instance.
+"""
+now = time.time()
+max_age = 48 * 60 * 60
+try:
+    files = os.listdir(TEMP_DIR)
+except FileNotFoundError:
+    # tempfolder does not exist
+    pass
+else:
+    for name in files:
+        try:
+            path = os.path.join(TEMP_DIR, name)
+            if now - os.path.getatime(path) > max_age:
+                os.remove(path)
+        except OSError:
+            pass
 
-def plugin_loaded():
-    """Sublime Text plugin loaded callback.
 
-    Remove all temporary files older than 2 days. Looks like in some cases some
-    temporary files are not deleted, if ST is closed. So try to delete too old
-    ones upon startup. Wait 2 days to reduce the chance of deleting temporary
-    files of another open ST instance.
-    """
-    now = time.time()
-    max_age = 48 * 60 * 60
+def cleanup():
     try:
         files = os.listdir(TEMP_DIR)
     except FileNotFoundError:
@@ -34,11 +47,10 @@ def plugin_loaded():
     else:
         for name in files:
             try:
-                path = os.path.join(TEMP_DIR, name)
-                if now - os.path.getatime(path) > max_age:
-                        os.remove(path)
+                os.remove(os.path.join(TEMP_DIR, name))
             except OSError:
                 pass
+        os.rmdir(TEMP_DIR)
 
 
 class TempFile(object):
@@ -52,20 +64,17 @@ class TempFile(object):
 
     def __init__(self, mode='r'):
         """Initialize TempFile object."""
-        self.name = tempfile.mktemp(dir=TEMP_DIR)
+        self.name = None
+        while self.name is None:
+            candidate = os.path.join(TEMP_DIR, str(uuid.uuid1()))
+            if not os.path.exists(candidate):
+                self.name = candidate
         self._file = None
         self._mode = mode
         # Cache unlink to keep it available even though the 'os' module is
         # already None'd out whenever __del__() is called.
         # See python stdlib's tempfile.py for details.
         self._unlink = os.unlink
-
-        try:
-            # ensure cache directory exists with write permissions
-            os.makedirs(TEMP_DIR, 0o700)
-        except OSError as e:
-            if e.errno != errno.EEXIST:
-                raise
 
     def __del__(self):
         """Destroy the TempFile object and remove the file from disk."""
@@ -86,7 +95,13 @@ class TempFile(object):
     def open(self):
         """Open temporary file."""
         if self._file is None:
-            self._file = open(self.name, mode=self._mode)
+            # ensure cache directory exists with write permissions
+            os.makedirs(TEMP_DIR, 0o700, exist_ok=True)
+            self._file = open(
+                file=self.name,
+                mode=self._mode,
+                opener=lambda file, flags: os.open(file, flags, 0o600)
+            )
         return self._file
 
     def close(self):

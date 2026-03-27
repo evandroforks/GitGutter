@@ -1,17 +1,12 @@
 {
     "*": {
-        "*": [
-            "markupsafe",
-            "python-jinja2"
-        ],
-        ">=3124": [
-            "markupsafe",
+        "<4000": [
             "mdpopups",
-            "pygments",
-            "pymdownx",
-            "python-jinja2",
-            "python-markdown",
-            "pyyaml"
+            "typing"
+        ],
+        ">=4000": [
+            "charset_normalizer",
+            "mdpopups"
         ]
     }
 }

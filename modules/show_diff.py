@@ -1,9 +1,4 @@
-# -*- coding: utf-8 -*-
 import sublime
-
-from .utils import ST3
-
-_ICON_EXT = '.png' if ST3 else ''
 
 
 class GitGutterShowDiff(object):
@@ -16,6 +11,7 @@ class GitGutterShowDiff(object):
         self.status_bar = status_bar
         self._line_height = 0
         self._minimap_size = 1
+        self._mini_diff = False
         # True if diff is running
         self._busy = False
 
@@ -50,8 +46,15 @@ class GitGutterShowDiff(object):
             self._busy = False
             return
 
+        # cache settings
+        view = self.git_handler.view
+        self._line_height = view.line_height()
+        self._minimap_size = self.git_handler.settings.show_in_minimap
+        self._mini_diff = view.settings().get("mini_diff", False)
+
         if not self.git_handler.in_repo():
-            show_untracked = self.git_handler.settings.get(
+
+            show_untracked = not self._mini_diff and self.git_handler.settings.get(
                 'show_markers_on_untracked_file', False)
 
             def bind_ignored_or_untracked(is_ignored):
@@ -80,13 +83,12 @@ class GitGutterShowDiff(object):
                 Scheme: (first, last, [inserted], [modified], [deleted])
         """
         try:
-            view = self.git_handler.view
-            self._line_height = view.line_height()
-            self._minimap_size = self.git_handler.settings.show_in_minimap
             regions = self._contents_to_regions(contents)
             if not self.git_handler.view_cache.is_changed():
                 for name, region in zip(self.region_names, regions):
                     self._bind_regions(name, region)
+                self.git_handler.view.erase_regions('git_gutter_ignored')
+                self.git_handler.view.erase_regions('git_gutter_untracked')
             self._update_status(
                 'modified' if contents[0] else 'committed', contents)
         except IndexError:
@@ -280,11 +282,21 @@ class GitGutterShowDiff(object):
                 scope = 'markup.deleted.git_gutter'
             else:
                 scope = 'markup.%s.git_gutter' % event
-            icon = self._icon_path(event)
+
+            if self._mini_diff:
+                icon = ''
+            else:
+                icon = self._icon_path(event)
+
             if self._minimap_size:
                 flags = sublime.DRAW_NO_FILL | sublime.DRAW_NO_OUTLINE
             else:
                 flags = sublime.HIDDEN
+
+            if hasattr(sublime, 'NO_UNDO'):
+                # supported as of ST4160
+                flags |= sublime.NO_UNDO
+
             self.git_handler.view.add_regions(
                 region_name, regions, scope, icon, flags)
         else:
@@ -311,5 +323,4 @@ class GitGutterShowDiff(object):
         else:
             arrow = ''
         return ''.join((
-            self.git_handler.settings.theme_path, '/',
-            event, arrow, _ICON_EXT))
+            self.git_handler.settings.theme_path, '/', event, arrow, '.png'))

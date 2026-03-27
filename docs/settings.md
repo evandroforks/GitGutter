@@ -421,7 +421,7 @@ The following variables can be used to customize the template:
 The _Line Annotation_ is aligned to the end of a line with a predefined distance by default. To align the Line Annotation to the first ruler instead, you can set `line_annotation_ruler` to `1`. A value of `2` aligns the text to the second ruler if available and so forth.
 
 
-### Line Annotation Inore Whitespace
+### Line Annotation Ignore Whitespace
 
 ```JSON
 "line_annotation_ignore_whitespace": false
@@ -446,14 +446,16 @@ GitGutter displays status information about open files in the status bar by defa
 ```JSON
 "status_bar_text": [
     "{% if repo and branch %}",
-    "{{repo}}/{{branch}}",
-    "{% if added_files + deleted_files + modified_files > 0 %}*{% endif %}",
-    "{% if compare not in ('HEAD', branch, None) %}, Comparing against {{compare}}{% endif %}",
-    "{% if state %}, File is {{state}}{% endif %}",
-    "{% if deleted > 0 %}, {{deleted}}-{% endif %}",
-    "{% if inserted > 0 %}, {{inserted}}+{% endif %}",
-    "{% if modified > 0 %}, {{modified}}≠{% endif %}",
-    "{% if line_author and line_author_age %}, ⟢ {{line_author}} ({{line_author_age}}){% endif %}",
+        "{% if not st_git_status %}",
+            "{{repo}}/{{branch}}",
+            "{% if added_files + deleted_files + modified_files > 0 %}*{% endif %}, ",
+        "{% endif %}",
+        "{% if compare not in ('HEAD', branch, None) %}Comparing against {{compare}}, {% endif %}",
+        "{% if state %}File is {{state}}{% endif %}",
+        "{% if deleted > 0 %}, {{deleted}}-{% endif %}",
+        "{% if inserted > 0 %}, {{inserted}}+{% endif %}",
+        "{% if modified > 0 %}, {{modified}}≠{% endif %}",
+        "{% if line_author and line_author_age %}, ⟢ {{line_author}} ({{line_author_age}}){% endif %}",
     "{% endif %}"
 ]
 ```
@@ -470,6 +472,7 @@ The following variables can be used to customize the template:
 
  Variable                  | Description
 :-------------------------:|-------------------------------------------------------------
+ `{{st_git_status}}`       | reflects `"show_git_status": true` in Preferences of ST 3189+
  `{{repo}}`                | repository name / folder name containing the .git directory
  `{{branch}}`              | checked out branch you are working on
  `{{remote}}`              | tracked remote of current branch you are working on or `None`

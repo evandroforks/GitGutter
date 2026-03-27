@@ -1,5 +1,9 @@
 # Troubleshooting
 
+GitGutter requires Sublime Text 3.1.1 (build 3176) or newer.
+
+GitGutter 1.10.x is available for backward compatibility with Sublime Text 2, but will not receive updates anymore.
+
 
 ## Is git working?
 
@@ -22,11 +26,11 @@ If git was found on [PATH](https://en.wikipedia.org/wiki/PATH_(variable)) and is
 
 Some operating systems (especially Mac OS) may not run Sublime Text within the login shell. As a result Sublime Text and all its packages don't have access to some of the user's environment variables including the [PATH](https://en.wikipedia.org/wiki/PATH_(variable)) to git.
 
-In some cases the package providing git, simply required some user confirmation due to license changes and thus simply refuses to run git.
+In some cases the package providing git (e.g. Xcode) simply requires some user confirmation due to license changes and thus simply refuses to run git.
 
-_With [SublimeFixMacPath](https://github.com/int3h/SublimeFixMacPath) package Sublime Text loads the PATH environment from the login shell. If git is working there, it will be found by GitGutter, too, then._
+_Sublime Text 2 may need the [SublimeFixMacPath](https://github.com/int3h/SublimeFixMacPath) package to the PATH environment from the login shell. If git is working there, it will be found by GitGutter, too, then._
 
-_GitGutter can work with a certain binary, too. Please read the section on the [git_binary](#git-path) setting._
+_GitGutter can work with a certain binary, too. Please read the section on the [git_binary](settings.md#git-binary) setting._
 
 
 ## GitGutter no longer works after upgrade
@@ -63,6 +67,24 @@ Please check if one of those states was applied to your view by one of your pack
 !!! warning "known issues"
 
     _ConvertToUTF8_ package is known to mark views as scratch during conversion without reverting that state reliably.
+
+
+## GitGutter doesn't add gutter icons any more
+
+This is expected behaviour if GitGutter runs on Sublime Text 3189+ with `"mini_diff": true` or `"mini_diff": "auto"` being set in _Preferences.sublime-settings_ in order to not interfere with the new [Incremental Diff](https://www.sublimetext.com/docs/3/incremental_diff.html) feature of Sublime Text 3.2+. In this situation GitGutter leaves the gutter to other plugins like SublimeLinter.
+
+We don't need two indicators about modifications at a time.
+
+GitGutter still works in the background to add modification indicators to the minimap as @sublimehq decided not to add this feature to the [Incremental Diff](https://www.sublimetext.com/docs/3/incremental_diff.html).
+
+If you prefer GitGutter's file modification icons in the gutter, you need to set `"mini_diff": false` in your _Preferences.sublime-settings_.
+
+
+## GitGutter doesn't show the repo/branch name in status bar
+
+The default [Status Bar Text Template](settings.md#status-bar-text-template) was modified to draw the repository name and the branch name only if the git integration of Sublime Text 3.2+ is disabled.
+
+If you still want to see them without disabling the git integration, you need to modify the [Status Bar Text Template](settings.md#status-bar-text-template).
 
 
 ## GitGutter doesn't recognize working tree

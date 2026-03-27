@@ -1,4 +1,5 @@
-# -*- coding: utf-8 -*-
+import sublime
+
 from . import blame
 from . import templates
 
@@ -69,10 +70,12 @@ class GitGutterStatusBar(object):
         # the settings.ViewSettings object which stores GitGutter' settings
         self.settings = settings
         # initialize the jinja2 template
-        self.template = None
+        self._template = None
 
         # the variables to use to render the status bar
         self.vars = {
+            # sublime text git integration enabled
+            'st_git_status': view.settings().get('show_git_status', False),
             # the repository name
             'repo': None,
             # the active branch name
@@ -102,11 +105,19 @@ class GitGutterStatusBar(object):
         for var in blame.BLAME_VARIABLES:
             self.vars[var] = None
 
+    @property
+    def template(self):
+        """"Create the template on demand and return it."""
+        if not self._template:
+            self._template = templates.create(
+                self.settings, 'status_bar_text', SimpleStatusBarTemplate)
+        return self._template
+
     def is_enabled(self):
         """Return whether status bar text is enabled in settings or not."""
         enabled = self.settings.get('show_status_bar_text', False)
-        if self.template and not enabled:
-            self.template = None
+        if self._template and not enabled:
+            self._template = None
             self.vars['repo'] = None
             self.erase()
         return enabled
@@ -149,8 +160,5 @@ class GitGutterStatusBar(object):
                 want_update = True
 
         if want_update:
-            if not self.template:
-                self.template = templates.create(
-                    self.settings, 'status_bar_text', SimpleStatusBarTemplate)
             self.view.set_status(
                 '00_git_gutter', self.template.render(**self.vars))
